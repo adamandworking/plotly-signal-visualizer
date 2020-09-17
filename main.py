@@ -141,7 +141,7 @@ app.layout = html.Div([
     )
 def replot_figure(n_intervals, mode, shown_list, sampling_rate, time_scale, time_shift):
     global count
-    print('replot figure called', count)
+    # print('replot figure called', count)
     count += 1
     sampling_rate = int(sampling_rate)
     time_interval = 1 / float(sampling_rate) 
@@ -229,7 +229,7 @@ def reading_streaming_data(rl):
         voltage_set = voltage_data
         current_set = current_data
         wattage_set = abs(voltage_set) * abs(current_set)
-        print('streaming', count)
+        # print('streaming', count)
         count += 1
         # print(voltage_set)
     # return voltage_set, current_set, wattage_set
