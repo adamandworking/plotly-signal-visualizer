@@ -7,6 +7,34 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 from dash.dependencies import Input, Output, State
+import serial
+import threading
+import time
+
+class ReadLine:
+    def __init__(self, s):
+        self.buf = bytearray()
+        self.s = s
+    
+    def readline(self):
+        i = self.buf.find(b"\n")
+        if i >= 0:
+            r = self.buf[:i+1]
+            self.buf = self.buf[i+1:]
+            return r
+        while True:
+            i = max(1, min(2048, self.s.in_waiting))
+            data = self.s.read(i)
+            i = data.find(b"\n")
+            if i >= 0:
+                r = self.buf + data[:i+1]
+                self.buf[0:] = data[i+1:]
+                return r
+            else:
+                self.buf.extend(data)
+
+# Source code from https://github.com/pyserial/pyserial/issues/216#issuecomment-369414522
+
 
 count = 0
 def find_dataset():
@@ -16,7 +44,7 @@ def find_dataset():
         dict_dataset_list.append({'label': dataset, 'value': idx})
     return dict_dataset_list
 
-def read_data_from_txt(path):
+def read_data_from_stream():
     f = open(path, "r")
     data = f.read()
     data = data.replace('\n', '')
@@ -40,27 +68,18 @@ def middle_calculator(array):
     return middle_value
 
 external_stylesheets = ['./stylesheet/bWLwgP.css']
-
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
-
 datasets = find_dataset()
-
+voltage_set, current_set, wattage_set = [0],[0],[]
 app.layout = html.Div([
     html.Label('Mode'),
-    dcc.Dropdown(
+        dcc.Dropdown(
         id='mode',
         options=[
             {'label': 'Signal', 'value': 'signal'},
             {'label': 'FFT', 'value': 'FFT'},
         ],
         value='signal'
-    ),
-
-    html.Label('Choose the dataset'),
-    dcc.Dropdown(
-        id='dropdown-dataset',
-        options=datasets,
-        value=0
     ),
 
     html.Br(),
@@ -101,57 +120,34 @@ app.layout = html.Div([
         value=0,
     ),
 
-    # html.Label('Voltage scale'),
-    # dcc.Slider(
-    #     id='voltage-scale',
-    #     min=-100,
-    #     max=100,
-    #     marks={i: str(i) for i in range(-100, 110, 10)},
-    #     value=0,
-    # ),
-
-    # html.Label('Current scale'),
-    # dcc.Slider(
-    #     id='current-scale',
-    #     min=-100,
-    #     max=100,
-    #     marks={i: str(i) for i in range(-100, 110, 10)},
-    #     value=0,
-    # ),
-
-    # html.Label('Wattage scale'),
-    # dcc.Slider(
-    #     id='wattage-scale',
-    #     min=-100,
-    #     max=100,
-    #     marks={i: str(i) for i in range(-100, 110, 10)},
-    #     value=0,
-    # ),
-    dcc.Graph(id = 'graph-with-controlls')
+    dcc.Graph(id = 'graph-with-controlls'),
+    dcc.Interval(
+        id='interval-component',
+        interval=80, # in milliseconds
+        n_intervals=0
+    )
 ], style={'columnCount': 1})
 
 @app.callback(
     Output('graph-with-controlls', 'figure'),
     [
+        Input('interval-component', 'n_intervals'),
         Input('mode', 'value'),
-        Input('dropdown-dataset', 'value'),
         Input('is-shown-checklist','value'),
         Input('sampling-rate', 'value'),
         Input('time-scale', 'value'),
         Input('time-shift', 'value'),
-        # Input('voltage-scale', 'value'),
-        # Input('current-scale', 'value'),
-        # Input('wattage-scale', 'value'),
     ],
     )
-def replot_figure(mode, option, shown_list, sampling_rate, time_scale, time_shift): #, voltage_scale, current_scale, wattage_scale):
+def replot_figure(n_intervals, mode, shown_list, sampling_rate, time_scale, time_shift):
     global count
     print('replot figure called', count)
     count += 1
-    dataset_path = datasets[option]['label']
-    voltage_set, current_set, wattage_set = read_data_from_txt(dataset_path)
     sampling_rate = int(sampling_rate)
     time_interval = 1 / float(sampling_rate) 
+    global voltage_set
+    global current_set
+    global wattage_set
     time_set = np.arange(0, time_interval * len(voltage_set), time_interval)
     fig = go.Figure()
     fig.data = []
@@ -191,7 +187,6 @@ def replot_figure(mode, option, shown_list, sampling_rate, time_scale, time_shif
         tickfont=dict(
             color="blue"
         ),
-        # range=[0.0,1]
     ),
     yaxis2=dict(
         title="current",
@@ -221,4 +216,35 @@ def replot_figure(mode, option, shown_list, sampling_rate, time_scale, time_shif
 )
     return fig
 
-app.run_server(debug=True)
+def reading_streaming_data(rl):
+    global voltage_set
+    global current_set
+    global wattage_set
+    count = 0
+    while True:
+        voltage_data = np.array(rl.readline().decode().replace('\r', '').replace('\n', '').split(','))
+        current_data = np.array(rl.readline().decode().replace('\r', '').replace('\n', '').split(','))
+        voltage_data = voltage_data.astype(float)
+        current_data = current_data.astype(float)
+        voltage_set = voltage_data
+        current_set = current_data
+        wattage_set = abs(voltage_set) * abs(current_set)
+        print('streaming', count)
+        count += 1
+        # print(voltage_set)
+    # return voltage_set, current_set, wattage_set
+
+def run_server(app):
+    app.run_server(debug=True)
+ser = serial.Serial('COM5', 115200)
+rl = ReadLine(ser)
+reading_thread = threading.Thread(target= lambda: reading_streaming_data(rl))
+reading_thread.setDaemon(True)
+reading_thread.start()
+
+# server_thread = threading.Thread(target= lambda: run_server(app))
+# server_thread.setDaemon(True)
+# server_thread.start()
+
+# reading_streaming_data(rl)
+app.run_server(debug=True, use_reloader=False)
