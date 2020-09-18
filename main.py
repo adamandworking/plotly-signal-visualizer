@@ -123,7 +123,7 @@ app.layout = html.Div([
     dcc.Graph(id = 'graph-with-controlls'),
     dcc.Interval(
         id='interval-component',
-        interval=80, # in milliseconds
+        interval=200, # in milliseconds
         n_intervals=0
     )
 ], style={'columnCount': 1})
